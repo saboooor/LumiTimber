@@ -29,7 +29,9 @@ public record Settings(
         int cooldownTicks,
         double fallTowardsPlayerChance,
         boolean damagePlayers,
-        double damageAmount
+        double damageAmount,
+        boolean domino,
+        int maxDominoChain
 ) {
     public enum ToppleMode {
         ALWAYS, SNEAKING, NOT_SNEAKING;
@@ -111,7 +113,9 @@ public record Settings(
                 (int) bounded(c.getInt("cooldown-ticks", 20), 0, 72000),
                 bounded(c.getDouble("danger.fall-towards-player-chance", 0.25), 0.0, 1.0),
                 c.getBoolean("danger.damage-players", true),
-                bounded(c.getDouble("danger.damage-amount", 14.0), 0.0, 100.0)
+                bounded(c.getDouble("danger.damage-amount", 14.0), 0.0, 100.0),
+                c.getBoolean("danger.domino", true),
+                (int) bounded(c.getInt("danger.max-domino-chain", 2), 1, 64)
         );
     }
 

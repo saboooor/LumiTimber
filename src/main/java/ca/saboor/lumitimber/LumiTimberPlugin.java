@@ -17,6 +17,7 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.Damageable;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.util.Vector;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -80,6 +81,23 @@ public final class LumiTimberPlugin extends JavaPlugin implements Listener, Comm
             }
         }
         return false;
+    }
+
+    private boolean isTreeAttachment(Block block) {
+        Material type = block.getType();
+        return type == Material.SNOW
+                || type == Material.SNOW_BLOCK
+                || type == Material.POWDER_SNOW
+                || type == Material.VINE
+                || type == Material.WEEPING_VINES
+                || type == Material.WEEPING_VINES_PLANT
+                || type == Material.TWISTING_VINES
+                || type == Material.TWISTING_VINES_PLANT
+                || type == Material.CAVE_VINES
+                || type == Material.CAVE_VINES_PLANT
+                || type == Material.MOSS_CARPET
+                || type == Material.PALE_MOSS_CARPET
+                || type == Material.PALE_HANGING_MOSS;
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -225,7 +243,7 @@ public final class LumiTimberPlugin extends JavaPlugin implements Listener, Comm
             }
         }
 
-        // Snapshot blocks
+        // Snapshot blocks including snow layers resting directly on top of tree leaves/logs
         List<TreeDetector.Pos> positions = new ArrayList<>(tree.logs());
         positions.addAll(tree.leaves());
 
@@ -233,6 +251,43 @@ public final class LumiTimberPlugin extends JavaPlugin implements Listener, Comm
         for (TreeDetector.Pos p : positions) {
             Block b = world.getBlockAt(p.x(), p.y(), p.z());
             snapshots.put(b, b.getBlockData().clone());
+        }
+
+        // Detect snow on top, vines clinging to sides/below, and hanging foliage
+        Set<TreeDetector.Pos> treePosSet = new HashSet<>(positions);
+        for (TreeDetector.Pos p : positions) {
+            // Check all 6 adjacent directions for vines/snow attached to tree logs or leaves
+            int[][] adjDirs = {
+                    {0, 1, 0}, {0, -1, 0},
+                    {1, 0, 0}, {-1, 0, 0},
+                    {0, 0, 1}, {0, 0, -1}
+            };
+            for (int[] dir : adjDirs) {
+                TreeDetector.Pos neighbor = new TreeDetector.Pos(p.x() + dir[0], p.y() + dir[1], p.z() + dir[2]);
+                if (!treePosSet.contains(neighbor) && world.isChunkLoaded(neighbor.x() >> 4, neighbor.z() >> 4)) {
+                    Block neighborBlock = world.getBlockAt(neighbor.x(), neighbor.y(), neighbor.z());
+                    if (isTreeAttachment(neighborBlock)) {
+                        snapshots.put(neighborBlock, neighborBlock.getBlockData().clone());
+                        // If it's a vine column (e.g. vines hanging down), trace downward
+                        if (neighborBlock.getType() == Material.VINE
+                                || neighborBlock.getType() == Material.WEEPING_VINES
+                                || neighborBlock.getType() == Material.WEEPING_VINES_PLANT
+                                || neighborBlock.getType() == Material.PALE_HANGING_MOSS) {
+                            int downY = neighbor.y() - 1;
+                            while (downY >= world.getMinHeight()) {
+                                Block downBlock = world.getBlockAt(neighbor.x(), downY, neighbor.z());
+                                if (downBlock.getType() == neighborBlock.getType()
+                                        || (neighborBlock.getType() == Material.WEEPING_VINES && downBlock.getType() == Material.WEEPING_VINES_PLANT)) {
+                                    snapshots.put(downBlock, downBlock.getBlockData().clone());
+                                    downY--;
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // Probe external protection plugins (WorldGuard, GriefPrevention, Towny, CoreProtect, etc.)
@@ -255,6 +310,22 @@ public final class LumiTimberPlugin extends JavaPlugin implements Listener, Comm
         // Cancel original vanilla break so we take full control over removal & animation
         event.setCancelled(true);
 
+        // Record cooldown timestamp
+        player.getPersistentDataContainer().set(lastChopKey, PersistentDataType.LONG, System.currentTimeMillis());
+
+        // Fell the tree and initiate falling animation
+        Vector initialFallDir = initial.getLocation().toVector().subtract(player.getLocation().toVector()).setY(0);
+        fellTree(initial, tree, snapshots, tool, player, initialFallDir, true, 0);
+    }
+
+    /**
+     * Executes the felling of a detected tree: removes blocks, plays chop feedback,
+     * damages tool (if direct chop), drops loot / starts animation, and handles domino cascading.
+     */
+    void fellTree(Block initial, TreeDetector.Tree tree, Map<Block, BlockData> snapshots,
+                  ItemStack tool, Player player, Vector fallDirection, boolean applyDurability, int chainDepth) {
+        World world = initial.getWorld();
+
         // Immediate audio and visual feedback for the broken log
         if (settings.sounds()) {
             var sg = initial.getBlockData().getSoundGroup();
@@ -269,8 +340,8 @@ public final class LumiTimberPlugin extends JavaPlugin implements Listener, Comm
         for (var entry : snapshots.entrySet()) {
             Block b = entry.getKey();
             boolean isLog = tree.logs().contains(new TreeDetector.Pos(b.getX(), b.getY(), b.getZ()));
-            List<ItemStack> drops = (isLog || settings.leafDrops()) && event.isDropItems()
-                    ? new ArrayList<>(b.getDrops(tool, player))
+            List<ItemStack> drops = (isLog || settings.leafDrops())
+                    ? new ArrayList<>(tool != null ? b.getDrops(tool, player) : b.getDrops())
                     : new ArrayList<>();
             pieces.add(new TimberAnimation.Piece(b.getLocation(), entry.getValue(), drops, isLog));
         }
@@ -281,17 +352,137 @@ public final class LumiTimberPlugin extends JavaPlugin implements Listener, Comm
             placed.set(b, false);
         }
 
-        // Apply tool durability damage
-        player.getInventory().setItemInMainHand(tool.damage(cost, player));
-
-        // Record cooldown timestamp
-        player.getPersistentDataContainer().set(lastChopKey, PersistentDataType.LONG, System.currentTimeMillis());
+        // Apply tool durability damage if triggered directly by player chop
+        if (applyDurability && player != null && tool != null) {
+            int cost = settings.damagePerLog() ? tree.logs().size() : 1;
+            player.getInventory().setItemInMainHand(tool.damage(cost, player));
+        }
 
         // Replant sapling
         replantSapling(tree, initial, pieces);
 
-        // Play Display Entity tree tilt animation
-        animation.play(pieces, initial.getLocation(), player.getLocation(), player, settings, () -> {});
+        // Play Display Entity tree tilt animation with chain depth tracking
+        animation.play(pieces, initial.getLocation(), fallDirection, player, settings, chainDepth, () -> {});
+    }
+
+    /**
+     * Attempts to trigger a domino cascade on a block struck by a falling tree.
+     */
+    void tryDominoFell(Block struckBlock, Vector impulseDir, Player player, int chainDepth) {
+        if (!settings.domino() || chainDepth >= settings.maxDominoChain()) return;
+        World world = struckBlock.getWorld();
+        if (settings.disabledWorlds().contains(world.getName())) return;
+        if (!isTreeMaterial(struckBlock)) return;
+
+        TreeDetector.Access access = new TreeDetector.Access() {
+            @Override
+            public boolean available(TreeDetector.Pos p) {
+                return p.y() >= world.getMinHeight() && p.y() < world.getMaxHeight() && world.isChunkLoaded(p.x() >> 4, p.z() >> 4);
+            }
+
+            private Block block(TreeDetector.Pos p) {
+                return world.getBlockAt(p.x(), p.y(), p.z());
+            }
+
+            @Override
+            public String material(TreeDetector.Pos p) {
+                return block(p).getType().name();
+            }
+
+            @Override
+            public boolean placed(TreeDetector.Pos p) {
+                Block b = block(p);
+                return placed.contains(b) || (b.getBlockData() instanceof Leaves leaves && leaves.isPersistent());
+            }
+        };
+
+        TreeDetector.Tree targetTree = detector.detect(
+                access,
+                new TreeDetector.Pos(struckBlock.getX(), struckBlock.getY(), struckBlock.getZ()),
+                settings.trees(),
+                settings.detection()
+        );
+        if (targetTree == null || targetTree.logs().isEmpty()) return;
+
+        // Find the lowest log block of the tree as the natural hinge base
+        TreeDetector.Pos basePos = targetTree.logs().iterator().next();
+        for (TreeDetector.Pos pos : targetTree.logs()) {
+            if (pos.y() < basePos.y()) {
+                basePos = pos;
+            }
+        }
+        Block baseBlock = world.getBlockAt(basePos.x(), basePos.y(), basePos.z());
+
+        // Snapshot blocks including snow layers resting directly on top of tree leaves/logs
+        List<TreeDetector.Pos> positions = new ArrayList<>(targetTree.logs());
+        positions.addAll(targetTree.leaves());
+
+        Map<Block, BlockData> snapshots = new LinkedHashMap<>();
+        for (TreeDetector.Pos p : positions) {
+            Block b = world.getBlockAt(p.x(), p.y(), p.z());
+            snapshots.put(b, b.getBlockData().clone());
+        }
+
+        // Detect snow on top, vines clinging to sides/below, and hanging foliage
+        Set<TreeDetector.Pos> treePosSet = new HashSet<>(positions);
+        for (TreeDetector.Pos p : positions) {
+            int[][] adjDirs = {
+                    {0, 1, 0}, {0, -1, 0},
+                    {1, 0, 0}, {-1, 0, 0},
+                    {0, 0, 1}, {0, 0, -1}
+            };
+            for (int[] dir : adjDirs) {
+                TreeDetector.Pos neighbor = new TreeDetector.Pos(p.x() + dir[0], p.y() + dir[1], p.z() + dir[2]);
+                if (!treePosSet.contains(neighbor) && world.isChunkLoaded(neighbor.x() >> 4, neighbor.z() >> 4)) {
+                    Block neighborBlock = world.getBlockAt(neighbor.x(), neighbor.y(), neighbor.z());
+                    if (isTreeAttachment(neighborBlock)) {
+                        snapshots.put(neighborBlock, neighborBlock.getBlockData().clone());
+                        // If it's a vine column (e.g. vines hanging down), trace downward
+                        if (neighborBlock.getType() == Material.VINE
+                                || neighborBlock.getType() == Material.WEEPING_VINES
+                                || neighborBlock.getType() == Material.WEEPING_VINES_PLANT
+                                || neighborBlock.getType() == Material.PALE_HANGING_MOSS) {
+                            int downY = neighbor.y() - 1;
+                            while (downY >= world.getMinHeight()) {
+                                Block downBlock = world.getBlockAt(neighbor.x(), downY, neighbor.z());
+                                if (downBlock.getType() == neighborBlock.getType()
+                                        || (neighborBlock.getType() == Material.WEEPING_VINES && downBlock.getType() == Material.WEEPING_VINES_PLANT)) {
+                                    snapshots.put(downBlock, downBlock.getBlockData().clone());
+                                    downY--;
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Check protection with simulated event
+        if (player != null) {
+            probing = true;
+            try {
+                for (Block b : snapshots.keySet()) {
+                    BlockBreakEvent check = new BlockBreakEvent(b, player);
+                    getServer().getPluginManager().callEvent(check);
+                    if (check.isCancelled()) {
+                        return;
+                    }
+                }
+            } finally {
+                probing = false;
+            }
+        }
+
+        // Sound cue for domino collision crack
+        if (settings.sounds()) {
+            world.playSound(struckBlock.getLocation(), Sound.ENTITY_ZOMBIE_BREAK_WOODEN_DOOR, SoundCategory.BLOCKS, 1.3f, 0.7f);
+            world.playSound(struckBlock.getLocation(), Sound.BLOCK_WOOD_BREAK, SoundCategory.BLOCKS, 1.4f, 0.6f);
+        }
+
+        // Domino fall inherits the impact impulse vector
+        fellTree(baseBlock, targetTree, snapshots, null, player, impulseDir, false, chainDepth + 1);
     }
 
     private void replantSapling(TreeDetector.Tree tree, Block initial, List<TimberAnimation.Piece> pieces) {

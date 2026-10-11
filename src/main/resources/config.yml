@@ -50,6 +50,10 @@ danger:
   damage-players: true
   # Damage dealt in half-hearts (14.0 = 7 full hearts).
   damage-amount: 14.0
+  # If true, a falling tree that strikes another standing tree will fell that tree as well (domino cascade).
+  domino: true
+  # Maximum consecutive cascade depth to prevent wiping out entire forests (stops after a few trees).
+  max-domino-chain: 2
 
 drops:
   # Whether leaves drop their contents (saplings, apples, sticks).
@@ -110,7 +114,7 @@ trees:
 
   jungle:
     logs: [JUNGLE_LOG, STRIPPED_JUNGLE_LOG, JUNGLE_WOOD, STRIPPED_JUNGLE_WOOD]
-    leaves: [JUNGLE_LEAVES]
+    leaves: [JUNGLE_LEAVES, VINE]
     sapling: JUNGLE_SAPLING
     branch-radius: 6
     leaf-radius: 6
@@ -158,7 +162,7 @@ trees:
 
   pale_oak:
     logs: [PALE_OAK_LOG, STRIPPED_PALE_OAK_LOG, PALE_OAK_WOOD, STRIPPED_PALE_OAK_WOOD]
-    leaves: [PALE_OAK_LEAVES, PALE_MOSS_CARPET, PALE_HANGING_MOSS]
+    leaves: [PALE_OAK_LEAVES, PALE_MOSS_CARPET, PALE_HANGING_MOSS, VINE]
     sapling: PALE_OAK_SAPLING
     branch-radius: 4
     leaf-radius: 5

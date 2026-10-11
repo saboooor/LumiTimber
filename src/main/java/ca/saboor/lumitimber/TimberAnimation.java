@@ -1,6 +1,7 @@
 package ca.saboor.lumitimber;
 
 import org.bukkit.*;
+import org.bukkit.block.Block;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
@@ -48,6 +49,7 @@ final class TimberAnimation implements AutoCloseable {
         final BlockData initialLogData;
         final Player player;
         final Settings settings;
+        final int chainDepth;
         final Runnable onComplete;
         final int totalDurationTicks;
         final float maxAngleRad;
@@ -61,7 +63,7 @@ final class TimberAnimation implements AutoCloseable {
 
         ActiveTreeFall(World world, Location pivot, Vector fallDir, Vector3f rotationAxis,
                        List<DisplayPiece> pieces, Vector3f highestTrunkOffset, BlockData initialLogData,
-                       Player player, Settings settings, Runnable onComplete) {
+                       Player player, Settings settings, int chainDepth, Runnable onComplete) {
             this.world = world;
             this.pivot = pivot;
             this.fallDir = fallDir;
@@ -71,6 +73,7 @@ final class TimberAnimation implements AutoCloseable {
             this.initialLogData = initialLogData;
             this.player = player;
             this.settings = settings;
+            this.chainDepth = chainDepth;
             this.onComplete = onComplete;
             this.totalDurationTicks = Math.max(10, settings.animationDurationTicks());
             this.maxAngleRad = (float) Math.toRadians(88.0);
@@ -172,6 +175,7 @@ final class TimberAnimation implements AutoCloseable {
         private void triggerImpact(Quaternionf impactQ, float currentAngle) {
             applyImpactEffects(impactQ);
             applyImpactDamage(impactQ);
+            applyDominoImpact(impactQ);
 
             if (settings.animationBounce()) {
                 this.impactTriggered = true;
@@ -180,6 +184,89 @@ final class TimberAnimation implements AutoCloseable {
             } else {
                 finishFall(this, impactQ);
             }
+        }
+
+        private void applyDominoImpact(Quaternionf finalQ) {
+            if (!settings.domino() || chainDepth >= settings.maxDominoChain()) return;
+
+            Block closestStruck = null;
+            double minDistanceSq = Double.MAX_VALUE;
+
+            for (DisplayPiece dp : pieces) {
+                Vector3f centerOffset = new Vector3f(dp.initialOffset).add(0.5f, 0.5f, 0.5f);
+                Vector3f rotatedCenter = finalQ.transform(centerOffset, new Vector3f());
+                int bx = (int) Math.floor(pivot.getX() + rotatedCenter.x);
+                int by = (int) Math.floor(pivot.getY() + rotatedCenter.y);
+                int bz = (int) Math.floor(pivot.getZ() + rotatedCenter.z);
+
+                if (!world.isChunkLoaded(bx >> 4, bz >> 4)) continue;
+
+                // Check volume around landing piece for standing tree blocks (logs, leaves, vines)
+                for (int dx = -1; dx <= 1; dx++) {
+                    for (int dy = -1; dy <= 1; dy++) {
+                        for (int dz = -1; dz <= 1; dz++) {
+                            Block b = world.getBlockAt(bx + dx, by + dy, bz + dz);
+                            Block logCandidate = findTreeLogFromContact(b);
+                            if (logCandidate != null) {
+                                double dSq = logCandidate.getLocation().distanceSquared(pivot);
+                                if (dSq < minDistanceSq) {
+                                    minDistanceSq = dSq;
+                                    closestStruck = logCandidate;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Trigger domino only on the single closest hit tree to avoid wide forest wipeouts
+            if (closestStruck != null) {
+                plugin.tryDominoFell(closestStruck, fallDir, player, chainDepth);
+            }
+        }
+
+        private Block findTreeLogFromContact(Block block) {
+            if (isStandingTreeLog(block)) {
+                return block;
+            }
+            // If contact is made with leaves or vines, search nearby (radius 4) for the tree log
+            if (isTreeCanopyOrVine(block)) {
+                for (int dy = 2; dy >= -4; dy--) {
+                    for (int dx = -3; dx <= 3; dx++) {
+                        for (int dz = -3; dz <= 3; dz++) {
+                            Block neighbor = block.getRelative(dx, dy, dz);
+                            if (isStandingTreeLog(neighbor)) {
+                                return neighbor;
+                            }
+                        }
+                    }
+                }
+            }
+            return null;
+        }
+
+        private boolean isTreeCanopyOrVine(Block block) {
+            Material mat = block.getType();
+            if (mat == Material.VINE || mat == Material.WEEPING_VINES || mat == Material.PALE_HANGING_MOSS) {
+                return true;
+            }
+            String name = mat.name();
+            for (TreeDetector.Definition def : settings.trees()) {
+                if (def.leaves().contains(name)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private boolean isStandingTreeLog(Block block) {
+            String name = block.getType().name();
+            for (TreeDetector.Definition def : settings.trees()) {
+                if (def.logs().contains(name)) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         private void applyTransform(Quaternionf q, int interpolationDuration) {
@@ -263,7 +350,7 @@ final class TimberAnimation implements AutoCloseable {
         this.ticker = plugin.getServer().getScheduler().runTaskTimer(plugin, this::tick, 1L, 2L);
     }
 
-    void play(List<Piece> pieces, Location origin, Location playerLoc, Player player, Settings settings, Runnable onComplete) {
+    void play(List<Piece> pieces, Location origin, Vector direction, Player player, Settings settings, int chainDepth, Runnable onComplete) {
         if (!settings.animated() || pieces.isEmpty() || totalActiveBlocks() + pieces.size() > settings.maxEntities()) {
             if (settings.sounds() && !pieces.isEmpty()) {
                 var sg = pieces.getFirst().data().getSoundGroup();
@@ -288,22 +375,21 @@ final class TimberAnimation implements AutoCloseable {
                 origin.getBlockZ() + 0.5
         );
 
-        // Fall direction: horizontal vector pointing AWAY from where the player chopped,
-        // or TOWARDS the player if fall-towards-player chance rolls.
-        Vector fallDir = origin.toVector().subtract(playerLoc.toVector()).setY(0);
+        // Fall direction
+        Vector fallDir = direction != null ? direction.clone().setY(0) : new Vector(1, 0, 0);
         if (fallDir.lengthSquared() < 0.0001) {
-            fallDir = playerLoc.getDirection().setY(0);
-            if (fallDir.lengthSquared() < 0.0001) {
-                fallDir = new Vector(1, 0, 0);
-            }
+            fallDir = new Vector(1, 0, 0);
         }
         fallDir.normalize();
 
-        boolean fallsTowards = Math.random() < settings.fallTowardsPlayerChance();
-        if (fallsTowards) {
-            fallDir.multiply(-1.0);
-            if (settings.sounds()) {
-                world.playSound(pivot, Sound.ENTITY_ZOMBIE_BREAK_WOODEN_DOOR, SoundCategory.BLOCKS, 1.0f, 1.3f);
+        // Only roll fall towards player on initial chop (chainDepth == 0)
+        if (chainDepth == 0) {
+            boolean fallsTowards = Math.random() < settings.fallTowardsPlayerChance();
+            if (fallsTowards) {
+                fallDir.multiply(-1.0);
+                if (settings.sounds()) {
+                    world.playSound(pivot, Sound.ENTITY_ZOMBIE_BREAK_WOODEN_DOOR, SoundCategory.BLOCKS, 1.0f, 1.3f);
+                }
             }
         }
 
@@ -365,7 +451,7 @@ final class TimberAnimation implements AutoCloseable {
 
         ActiveTreeFall fall = new ActiveTreeFall(
                 world, pivot, fallDir, rotationAxis, displayPieces, highestTrunkOffset,
-                pieces.getFirst().data(), player, settings, onComplete
+                pieces.getFirst().data(), player, settings, chainDepth, onComplete
         );
         active.put(fall.id, fall);
     }
