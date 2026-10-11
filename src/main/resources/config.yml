@@ -1,0 +1,163 @@
+# LumiTimber: Modern Paper 26.1+, Java 25.
+# High-performance tree detection and Display Entity whole-tree tilting timber animation.
+
+disabled-worlds: []
+
+# Tool requirement: If true, players must use an axe (any item tagged #minecraft:axes).
+require-axe: true
+
+# When tree felling can occur:
+# ALWAYS: Any time the tree is chopped.
+# SNEAKING: Player must be sneaking while chopping.
+# NOT_SNEAKING: Player must NOT be sneaking while chopping.
+topple-mode: ALWAYS
+
+# Cooldown between chops per player in ticks (20 ticks = 1 second). Set to 0 to disable.
+cooldown-ticks: 20
+
+detection:
+  # Maximum logs allowed per chop. Refuses to fell structures exceeding this limit.
+  max-logs: 150
+  # Minimum leaves required around logs to be recognized as a tree (prevents felling houses/piles).
+  minimum-leaves: 5
+  # If true, only detects logs upwards from the chopped block.
+  upwards-only: true
+  # If true, leaves attached to the tree are also felled.
+  destroy-leaves: true
+  # If true, for multi-block trunks (e.g. 2x2 trees), all ground base logs must be severed before toppling.
+  require-cut-base: false
+
+tool:
+  # If true, removes 1 tool durability per felled log (respecting Unbreaking enchantment).
+  damage-per-log: true
+  # Refuses to fell the tree if the tool's durability is too low to survive the chop.
+  protect: true
+
+animation:
+  # Enable Display Entity whole-tree rigid tilt animation.
+  enabled: true
+  # Duration of the fall animation in ticks (26 ticks ≈ 1.3 seconds).
+  fall-duration-ticks: 26
+  # Maximum simultaneous active display blocks across all running timber animations.
+  max-active-blocks: 2000
+
+drops:
+  # Whether leaves drop their contents (saplings, apples, sticks).
+  leaves: true
+  # If true, drops items where each falling block lands on the ground.
+  # If false, drops all loot at the chopped stump.
+  realistic: true
+  # If true, places drops directly into the player's inventory; overflow drops at player feet.
+  add-to-inventory: false
+
+effects:
+  sounds: true
+  particles: true
+
+replant:
+  enabled: true
+  # If false, consumes one matching sapling from the tree's actual drops.
+  # If true, always replants regardless of whether a sapling dropped.
+  always: false
+  # Seconds of break protection on newly replanted saplings (prevents accidental axe swings).
+  protect-seconds: 3
+  # Soil blocks eligible for sapling replanting.
+  soil:
+    - GRASS_BLOCK
+    - DIRT
+    - COARSE_DIRT
+    - PODZOL
+    - ROOTED_DIRT
+    - MOSS_BLOCK
+    - PALE_MOSS_BLOCK
+    - MUD
+    - MYCELIUM
+
+trees:
+  oak:
+    logs: [OAK_LOG, STRIPPED_OAK_LOG, OAK_WOOD, STRIPPED_OAK_WOOD]
+    leaves: [OAK_LEAVES]
+    sapling: OAK_SAPLING
+    branch-radius: 6
+    leaf-radius: 6
+    diagonal-leaves: false
+
+  spruce:
+    logs: [SPRUCE_LOG, STRIPPED_SPRUCE_LOG, SPRUCE_WOOD, STRIPPED_SPRUCE_WOOD]
+    leaves: [SPRUCE_LEAVES]
+    sapling: SPRUCE_SAPLING
+    branch-radius: 2
+    leaf-radius: 6
+    diagonal-leaves: false
+
+  birch:
+    logs: [BIRCH_LOG, STRIPPED_BIRCH_LOG, BIRCH_WOOD, STRIPPED_BIRCH_WOOD]
+    leaves: [BIRCH_LEAVES]
+    sapling: BIRCH_SAPLING
+    branch-radius: 1
+    leaf-radius: 4
+    diagonal-leaves: false
+
+  jungle:
+    logs: [JUNGLE_LOG, STRIPPED_JUNGLE_LOG, JUNGLE_WOOD, STRIPPED_JUNGLE_WOOD]
+    leaves: [JUNGLE_LEAVES]
+    sapling: JUNGLE_SAPLING
+    branch-radius: 6
+    leaf-radius: 6
+    diagonal-leaves: false
+
+  acacia:
+    logs: [ACACIA_LOG, STRIPPED_ACACIA_LOG, ACACIA_WOOD, STRIPPED_ACACIA_WOOD]
+    leaves: [ACACIA_LEAVES]
+    sapling: ACACIA_SAPLING
+    branch-radius: 4
+    leaf-radius: 5
+    diagonal-leaves: false
+
+  dark_oak:
+    logs: [DARK_OAK_LOG, STRIPPED_DARK_OAK_LOG, DARK_OAK_WOOD, STRIPPED_DARK_OAK_WOOD]
+    leaves: [DARK_OAK_LEAVES]
+    sapling: DARK_OAK_SAPLING
+    branch-radius: 4
+    leaf-radius: 5
+    diagonal-leaves: false
+
+  azalea:
+    logs: [OAK_LOG, STRIPPED_OAK_LOG, OAK_WOOD, STRIPPED_OAK_WOOD]
+    leaves: [AZALEA_LEAVES, FLOWERING_AZALEA_LEAVES]
+    sapling: AZALEA
+    branch-radius: 3
+    leaf-radius: 4
+    diagonal-leaves: false
+
+  cherry:
+    logs: [CHERRY_LOG, STRIPPED_CHERRY_LOG, CHERRY_WOOD, STRIPPED_CHERRY_WOOD]
+    leaves: [CHERRY_LEAVES]
+    sapling: CHERRY_SAPLING
+    branch-radius: 10
+    leaf-radius: 6
+    diagonal-leaves: false
+
+  mangrove:
+    logs: [MANGROVE_LOG, STRIPPED_MANGROVE_LOG, MANGROVE_WOOD, STRIPPED_MANGROVE_WOOD]
+    leaves: [MANGROVE_LEAVES, MANGROVE_ROOTS, MOSS_CARPET, MANGROVE_PROPAGULE, VINE]
+    sapling: MANGROVE_PROPAGULE
+    branch-radius: 30
+    leaf-radius: 10
+    diagonal-leaves: true
+
+  pale_oak:
+    logs: [PALE_OAK_LOG, STRIPPED_PALE_OAK_LOG, PALE_OAK_WOOD, STRIPPED_PALE_OAK_WOOD]
+    leaves: [PALE_OAK_LEAVES, PALE_MOSS_CARPET, PALE_HANGING_MOSS]
+    sapling: PALE_OAK_SAPLING
+    branch-radius: 4
+    leaf-radius: 5
+    diagonal-leaves: false
+
+  poplar:
+    logs: [BIRCH_LOG, STRIPPED_BIRCH_LOG, BIRCH_WOOD, STRIPPED_BIRCH_WOOD]
+    leaves: [BIRCH_LEAVES, OAK_LEAVES]
+    sapling: BIRCH_SAPLING
+    branch-radius: 1
+    leaf-radius: 4
+    diagonal-leaves: false
