@@ -23,9 +23,13 @@ public record Settings(
         boolean sounds,
         boolean particles,
         boolean animated,
+        boolean animationBounce,
         int animationDurationTicks,
         int maxEntities,
-        int cooldownTicks
+        int cooldownTicks,
+        double fallTowardsPlayerChance,
+        boolean damagePlayers,
+        double damageAmount
 ) {
     public enum ToppleMode {
         ALWAYS, SNEAKING, NOT_SNEAKING;
@@ -45,14 +49,15 @@ public record Settings(
         ConfigurationSection section = Objects.requireNonNull(c.getConfigurationSection("trees"), "Missing trees section in configuration");
         for (String key : section.getKeys(false)) {
             ConfigurationSection t = Objects.requireNonNull(section.getConfigurationSection(key));
-            Set<String> logs = materials(t.getStringList("logs"));
-            Set<String> leaves = materials(t.getStringList("leaves"));
+            Set<String> logs = materials(t.getStringList("logs"), false);
+            Set<String> leaves = materials(t.getStringList("leaves"), false);
             if (logs.isEmpty() || leaves.isEmpty()) {
-                throw new IllegalArgumentException("Empty tree logs or leaves definition for: " + key);
+                continue;
             }
             String sapling = t.getString("sapling", "");
-            if (Material.matchMaterial(sapling) == null) {
-                throw new IllegalArgumentException("Invalid sapling material '" + sapling + "' for tree: " + key);
+            Material saplingMat = Material.matchMaterial(sapling);
+            if (saplingMat == null) {
+                continue;
             }
             trees.add(new TreeDetector.Definition(
                     key,
@@ -70,7 +75,7 @@ public record Settings(
         boolean upwardsOnly = c.getBoolean("detection.upwards-only", true);
         boolean destroyLeaves = c.getBoolean("detection.destroy-leaves", true);
         boolean requireCutBase = c.getBoolean("detection.require-cut-base", false);
-        Set<String> soil = materials(c.getStringList("replant.soil"));
+        Set<String> soil = materials(c.getStringList("replant.soil"), false);
 
         TreeDetector.Options detectionOptions = new TreeDetector.Options(
                 maxLogs, minLeaves, upwardsOnly, destroyLeaves, requireCutBase, soil
@@ -100,9 +105,13 @@ public record Settings(
                 c.getBoolean("effects.sounds", true),
                 c.getBoolean("effects.particles", true),
                 c.getBoolean("animation.enabled", true),
-                (int) bounded(c.getInt("animation.fall-duration-ticks", 26), 10, 100),
+                c.getBoolean("animation.bounce", true),
+                (int) bounded(c.getInt("animation.fall-duration-ticks", 52), 10, 300),
                 (int) bounded(c.getInt("animation.max-active-blocks", 2000), 1, 10000),
-                (int) bounded(c.getInt("cooldown-ticks", 20), 0, 72000)
+                (int) bounded(c.getInt("cooldown-ticks", 20), 0, 72000),
+                bounded(c.getDouble("danger.fall-towards-player-chance", 0.25), 0.0, 1.0),
+                c.getBoolean("danger.damage-players", true),
+                bounded(c.getDouble("danger.damage-amount", 14.0), 0.0, 100.0)
         );
     }
 
@@ -113,14 +122,15 @@ public record Settings(
         return v;
     }
 
-    private static Set<String> materials(List<String> names) {
+    private static Set<String> materials(List<String> names, boolean strict) {
         Set<String> result = new LinkedHashSet<>();
         for (String name : names) {
             Material m = Material.matchMaterial(name);
-            if (m == null || !m.isBlock()) {
+            if (m != null && m.isBlock()) {
+                result.add(m.name());
+            } else if (strict) {
                 throw new IllegalArgumentException("Invalid block material: " + name);
             }
-            result.add(m.name());
         }
         return result;
     }

@@ -195,10 +195,10 @@ class TreeDetectorTest {
         List<TreeDetector.Definition> treeDefs = List.of(
                 new TreeDetector.Definition(
                         "poplar",
-                        Set.of("BIRCH_LOG", "STRIPPED_BIRCH_LOG"),
-                        Set.of("BIRCH_LEAVES", "OAK_LEAVES"),
-                        "BIRCH_SAPLING",
-                        1.0,
+                        Set.of("POPLAR_LOG", "STRIPPED_POPLAR_LOG", "POPLAR_WOOD", "STRIPPED_POPLAR_WOOD"),
+                        Set.of("YELLOW_POPLAR_LEAVES", "ORANGE_POPLAR_LEAVES", "RED_POPLAR_LEAVES"),
+                        "POPLAR_SAPLING",
+                        2.0,
                         4,
                         false
                 )
@@ -207,14 +207,14 @@ class TreeDetectorTest {
         MockWorld world = new MockWorld();
         // Tall slender Poplar trunk
         for (int y = 64; y <= 72; y++) {
-            world.set(0, y, 0, "BIRCH_LOG");
+            world.set(0, y, 0, "POPLAR_LOG");
         }
         // Columnar canopy
         for (int y = 68; y <= 73; y++) {
-            world.set(1, y, 0, "BIRCH_LEAVES");
-            world.set(-1, y, 0, "BIRCH_LEAVES");
-            world.set(0, y, 1, "BIRCH_LEAVES");
-            world.set(0, y, -1, "BIRCH_LEAVES");
+            world.set(1, y, 0, "YELLOW_POPLAR_LEAVES");
+            world.set(-1, y, 0, "ORANGE_POPLAR_LEAVES");
+            world.set(0, y, 1, "RED_POPLAR_LEAVES");
+            world.set(0, y, -1, "YELLOW_POPLAR_LEAVES");
         }
 
         TreeDetector.Tree result = detector.detect(

@@ -255,6 +255,15 @@ public final class LumiTimberPlugin extends JavaPlugin implements Listener, Comm
         // Cancel original vanilla break so we take full control over removal & animation
         event.setCancelled(true);
 
+        // Immediate audio and visual feedback for the broken log
+        if (settings.sounds()) {
+            var sg = initial.getBlockData().getSoundGroup();
+            world.playSound(initial.getLocation().add(0.5, 0.5, 0.5), sg.getBreakSound(), SoundCategory.BLOCKS, sg.getVolume(), sg.getPitch());
+        }
+        if (settings.particles()) {
+            world.spawnParticle(Particle.BLOCK, initial.getLocation().add(0.5, 0.5, 0.5), 16, 0.25, 0.25, 0.25, initial.getBlockData());
+        }
+
         // Gather drops and construct animation pieces
         List<TimberAnimation.Piece> pieces = new ArrayList<>(snapshots.size());
         for (var entry : snapshots.entrySet()) {
@@ -318,6 +327,10 @@ public final class LumiTimberPlugin extends JavaPlugin implements Listener, Comm
 
     private void plantSapling(Block initial, Material saplingMat) {
         initial.setType(saplingMat, true);
+        if (settings.sounds()) {
+            var sg = saplingMat.createBlockData().getSoundGroup();
+            initial.getWorld().playSound(initial.getLocation().add(0.5, 0.5, 0.5), sg.getPlaceSound(), SoundCategory.BLOCKS, 0.8f, 1.0f);
+        }
         if (settings.replantProtectSeconds() > 0) {
             Location loc = initial.getLocation();
             protectedSaplings.add(loc);

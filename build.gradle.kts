@@ -9,8 +9,8 @@ repositories {
 }
 
 dependencies {
-    compileOnly("io.papermc.paper:paper-api:26.1.2.build.53-stable")
-    testImplementation("io.papermc.paper:paper-api:26.1.2.build.53-stable")
+    compileOnly("io.papermc.paper:paper-api:26.3-pre-2.build.0-alpha")
+    testImplementation("io.papermc.paper:paper-api:26.3-pre-2.build.0-alpha")
     testImplementation(platform("org.junit:junit-bom:5.11.4"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
@@ -28,4 +28,13 @@ tasks.test { useJUnitPlatform() }
 tasks.processResources {
     inputs.property("version", project.version)
     filesMatching("plugin.yml") { expand("version" to project.version) }
+}
+
+tasks.jar {
+    doLast {
+        copy {
+            from(archiveFile)
+            into(layout.projectDirectory.dir("target"))
+        }
+    }
 }

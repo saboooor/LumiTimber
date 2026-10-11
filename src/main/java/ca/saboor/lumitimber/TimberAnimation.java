@@ -41,6 +41,7 @@ final class TimberAnimation implements AutoCloseable {
         final UUID id = UUID.randomUUID();
         final World world;
         final Location pivot;
+        final Vector fallDir;
         final Vector3f rotationAxis;
         final List<DisplayPiece> pieces;
         final Vector3f highestTrunkOffset;
@@ -53,11 +54,17 @@ final class TimberAnimation implements AutoCloseable {
         int ageTicks = 0;
         boolean finished = false;
 
-        ActiveTreeFall(World world, Location pivot, Vector3f rotationAxis, List<DisplayPiece> pieces,
-                       Vector3f highestTrunkOffset, BlockData initialLogData, Player player,
-                       Settings settings, Runnable onComplete) {
+        // Bounce/rebound state
+        boolean impactTriggered = false;
+        int bounceTicks = 0;
+        float impactAngleRad = 0.0f;
+
+        ActiveTreeFall(World world, Location pivot, Vector fallDir, Vector3f rotationAxis,
+                       List<DisplayPiece> pieces, Vector3f highestTrunkOffset, BlockData initialLogData,
+                       Player player, Settings settings, Runnable onComplete) {
             this.world = world;
             this.pivot = pivot;
+            this.fallDir = fallDir;
             this.rotationAxis = rotationAxis;
             this.pieces = pieces;
             this.highestTrunkOffset = highestTrunkOffset;
@@ -71,61 +78,175 @@ final class TimberAnimation implements AutoCloseable {
 
         void tick() {
             if (finished) return;
-            ageTicks++;
 
-            // Mid-fall sound effect (leaves rustling as tree whooshes through the air)
-            if (ageTicks == totalDurationTicks / 2 && settings.sounds()) {
-                world.playSound(pivot, Sound.BLOCK_GRASS_STEP, 0.9f, 0.8f);
-                world.playSound(pivot, Sound.ITEM_ARMOR_EQUIP_ELYTRA, 0.6f, 0.6f);
-            }
-
-            // Update transformation every 2 ticks with 2-tick client interpolation duration
-            if (ageTicks % 2 == 0 || ageTicks >= totalDurationTicks) {
-                float progress = Math.min(1.0f, (float) (ageTicks + 2) / (float) totalDurationTicks);
-                // Natural gravitational acceleration: angular acceleration tau ~ sin(theta) -> theta ~ t^2.2
-                float eased = (float) Math.pow(progress, 2.2);
-                float currentAngle = maxAngleRad * eased;
+            // Handle rebound bounce phase after ground impact
+            if (impactTriggered) {
+                bounceTicks += 2;
+                // Rebound arc: brief slight rebound upwards (~4.5 degrees) then settle back down
+                float bounceAngleOffset = (float) Math.toRadians(4.5);
+                float currentAngle;
+                if (bounceTicks <= 2) {
+                    // Ticks 0..2: bounce up
+                    float fraction = (float) bounceTicks / 2.0f;
+                    currentAngle = impactAngleRad - (bounceAngleOffset * fraction);
+                } else if (bounceTicks <= 4) {
+                    // Ticks 2..4: settle back down
+                    float fraction = (float) (bounceTicks - 2) / 2.0f;
+                    currentAngle = (impactAngleRad - bounceAngleOffset) + (bounceAngleOffset * fraction);
+                } else {
+                    currentAngle = impactAngleRad;
+                }
+                currentAngle = Math.max(0.0f, currentAngle);
 
                 Quaternionf currentQ = new Quaternionf().setAngleAxis(
                         currentAngle, rotationAxis.x, rotationAxis.y, rotationAxis.z
                 );
 
-                // Check for terrain contact using the highest trunk block
-                if (highestTrunkOffset != null) {
-                    Vector3f topRotated = currentQ.transform(highestTrunkOffset, new Vector3f());
-                    double worldX = pivot.getX() + topRotated.x + 0.5;
-                    double worldY = pivot.getY() + topRotated.y + 0.5;
-                    double worldZ = pivot.getZ() + topRotated.z + 0.5;
-
-                    int chunkX = ((int) Math.floor(worldX)) >> 4;
-                    int chunkZ = ((int) Math.floor(worldZ)) >> 4;
-                    if (world.isChunkLoaded(chunkX, chunkZ)) {
-                        int groundY = world.getHighestBlockYAt((int) Math.floor(worldX), (int) Math.floor(worldZ));
-                        if (worldY <= groundY + 0.8 && ageTicks >= 6) {
-                            // Tree hit terrain/obstacle early!
-                            finishFall(this, currentQ);
-                            return;
-                        }
-                    }
-                }
-
-                if (ageTicks >= totalDurationTicks) {
+                if (bounceTicks >= 6) {
                     finishFall(this, currentQ);
                     return;
                 }
 
-                // Apply smooth client-side interpolation to all display entities
-                Transformation transform;
-                Vector3f scaleOne = new Vector3f(1.0f, 1.0f, 1.0f);
-                Quaternionf identity = new Quaternionf();
+                applyTransform(currentQ, 2);
+                return;
+            }
 
-                for (DisplayPiece dp : pieces) {
-                    if (!dp.display.isValid()) continue;
-                    Vector3f translation = currentQ.transform(dp.initialOffset, new Vector3f());
-                    transform = new Transformation(translation, currentQ, scaleOne, identity);
-                    dp.display.setInterpolationDelay(0);
-                    dp.display.setInterpolationDuration(2);
-                    dp.display.setTransformation(transform);
+            ageTicks += 2;
+
+            // Wood creaking and strain sounds as the tree bends and tilts under gravity
+            if (settings.sounds()) {
+                // Initial strain and creak as the hinge snaps and leans (around 15-25% through the fall)
+                if (ageTicks >= totalDurationTicks * 0.18 && ageTicks < totalDurationTicks * 0.18 + 2) {
+                    world.playSound(pivot, Sound.ENTITY_CREAKING_SWAY, SoundCategory.BLOCKS, 1.3f, 0.85f);
+                    world.playSound(pivot, Sound.BLOCK_WOOD_BREAK, SoundCategory.BLOCKS, 0.9f, 0.75f);
+                }
+                // Secondary groaning creak as momentum builds (around 45-55% through the fall)
+                if (ageTicks >= totalDurationTicks * 0.48 && ageTicks < totalDurationTicks * 0.48 + 2) {
+                    world.playSound(pivot, Sound.ENTITY_CREAKING_SWAY, SoundCategory.BLOCKS, 1.5f, 0.7f);
+                    world.playSound(pivot, Sound.ENTITY_ZOMBIE_BREAK_WOODEN_DOOR, SoundCategory.BLOCKS, 0.8f, 0.7f);
+                    world.playSound(pivot, Sound.BLOCK_GRASS_STEP, SoundCategory.BLOCKS, 1.2f, 0.7f);
+                    world.playSound(pivot, Sound.ITEM_ARMOR_EQUIP_ELYTRA, SoundCategory.BLOCKS, 0.8f, 0.5f);
+                }
+                // Final tearing rush right before impact (around 75-85% through the fall)
+                if (ageTicks >= totalDurationTicks * 0.78 && ageTicks < totalDurationTicks * 0.78 + 2) {
+                    world.playSound(pivot, Sound.ENTITY_CREAKING_TWITCH, SoundCategory.BLOCKS, 1.4f, 0.65f);
+                    world.playSound(pivot, Sound.BLOCK_CHERRY_WOOD_BREAK, SoundCategory.BLOCKS, 1.1f, 0.55f);
+                }
+            }
+
+            float progress = Math.min(1.0f, (float) ageTicks / (float) totalDurationTicks);
+            // Natural gravitational acceleration: angular acceleration tau ~ sin(theta) -> theta ~ t^2.2
+            float eased = (float) Math.pow(progress, 2.2);
+            float currentAngle = maxAngleRad * eased;
+
+            Quaternionf currentQ = new Quaternionf().setAngleAxis(
+                    currentAngle, rotationAxis.x, rotationAxis.y, rotationAxis.z
+            );
+
+            // Check for terrain contact using the top of the trunk once partially fallen
+            boolean terrainHit = false;
+            if (highestTrunkOffset != null && ageTicks >= (int) (totalDurationTicks * 0.6)) {
+                Vector3f topRotated = currentQ.transform(highestTrunkOffset, new Vector3f());
+                double worldX = pivot.getX() + topRotated.x + 0.5;
+                double worldY = pivot.getY() + topRotated.y + 0.5;
+                double worldZ = pivot.getZ() + topRotated.z + 0.5;
+
+                int chunkX = ((int) Math.floor(worldX)) >> 4;
+                int chunkZ = ((int) Math.floor(worldZ)) >> 4;
+                if (world.isChunkLoaded(chunkX, chunkZ)) {
+                    int groundY = world.getHighestBlockYAt((int) Math.floor(worldX), (int) Math.floor(worldZ));
+                    if (worldY <= groundY + 0.8) {
+                        terrainHit = true;
+                    }
+                }
+            }
+
+            if (terrainHit || ageTicks >= totalDurationTicks) {
+                triggerImpact(currentQ, currentAngle);
+                return;
+            }
+
+            applyTransform(currentQ, 2);
+        }
+
+        private void triggerImpact(Quaternionf impactQ, float currentAngle) {
+            applyImpactEffects(impactQ);
+            applyImpactDamage(impactQ);
+
+            if (settings.animationBounce()) {
+                this.impactTriggered = true;
+                this.impactAngleRad = currentAngle;
+                this.bounceTicks = 0;
+            } else {
+                finishFall(this, impactQ);
+            }
+        }
+
+        private void applyTransform(Quaternionf q, int interpolationDuration) {
+            Vector3f scaleOne = new Vector3f(1.0f, 1.0f, 1.0f);
+            Quaternionf identity = new Quaternionf();
+
+            for (DisplayPiece dp : pieces) {
+                if (!dp.display.isValid()) continue;
+                Vector3f translation = q.transform(dp.initialOffset, new Vector3f());
+                Transformation transform = new Transformation(translation, q, scaleOne, identity);
+                dp.display.setInterpolationDelay(0);
+                dp.display.setInterpolationDuration(interpolationDuration);
+                dp.display.setTransformation(transform);
+            }
+        }
+
+        private void applyImpactEffects(Quaternionf finalQ) {
+            if (settings.sounds()) {
+                // Loud and deep multi-layered wood crash
+                // 1. Deep heavy body thud / bass impact
+                world.playSound(pivot, Sound.ITEM_MACE_SMASH_GROUND_HEAVY, SoundCategory.BLOCKS, 2.0f, 0.55f);
+                world.playSound(pivot, Sound.ENTITY_GENERIC_EXPLODE, SoundCategory.BLOCKS, 0.7f, 0.6f);
+                // 2. Loud splintering and cracking wood at low pitch
+                world.playSound(pivot, Sound.BLOCK_WOOD_FALL, SoundCategory.BLOCKS, 2.5f, 0.5f);
+                world.playSound(pivot, Sound.BLOCK_WOOD_BREAK, SoundCategory.BLOCKS, 2.0f, 0.6f);
+                world.playSound(pivot, Sound.ENTITY_ZOMBIE_BREAK_WOODEN_DOOR, SoundCategory.BLOCKS, 1.4f, 0.65f);
+                // 3. Foliage and ground displacement crash
+                world.playSound(pivot, Sound.BLOCK_GRASS_BREAK, SoundCategory.BLOCKS, 1.6f, 0.6f);
+                if (settings.animationBounce()) {
+                    world.playSound(pivot, Sound.ENTITY_IRON_GOLEM_DAMAGE, SoundCategory.BLOCKS, 0.8f, 1.3f);
+                }
+            }
+
+            if (settings.particles()) {
+                world.spawnParticle(Particle.POOF, pivot.clone().add(0, 0.3, 0), 24, 0.8, 0.3, 0.8, 0.08);
+            }
+        }
+
+        private void applyImpactDamage(Quaternionf finalQ) {
+            if (!settings.damagePlayers()) return;
+
+            Set<UUID> damagedEntities = new HashSet<>();
+            Vector knockback = fallDir.clone().normalize().multiply(0.8).setY(0.35);
+
+            for (DisplayPiece dp : pieces) {
+                Vector3f centerOffset = new Vector3f(dp.initialOffset).add(0.5f, 0.5f, 0.5f);
+                Vector3f rotatedCenter = finalQ.transform(centerOffset, new Vector3f());
+                Location loc = new Location(
+                        world,
+                        pivot.getX() + rotatedCenter.x,
+                        pivot.getY() + rotatedCenter.y,
+                        pivot.getZ() + rotatedCenter.z
+                );
+
+                for (Entity entity : world.getNearbyEntities(loc, 1.6, 1.6, 1.6)) {
+                    if (entity instanceof Player victim && !damagedEntities.contains(victim.getUniqueId())) {
+                        if (victim.getGameMode() == GameMode.SURVIVAL || victim.getGameMode() == GameMode.ADVENTURE) {
+                            damagedEntities.add(victim.getUniqueId());
+                            victim.damage(settings.damageAmount());
+                            victim.setVelocity(victim.getVelocity().add(knockback));
+                            victim.sendActionBar(net.kyori.adventure.text.Component.text(
+                                    "Crushed by a falling tree!",
+                                    net.kyori.adventure.text.format.NamedTextColor.RED
+                            ));
+                            world.playSound(victim.getLocation(), Sound.ENTITY_PLAYER_HURT, SoundCategory.PLAYERS, 1.0f, 0.9f);
+                        }
+                    }
                 }
             }
         }
@@ -139,11 +260,15 @@ final class TimberAnimation implements AutoCloseable {
     TimberAnimation(LumiTimberPlugin plugin) {
         this.plugin = plugin;
         this.tag = new NamespacedKey(plugin, "animation_display");
-        this.ticker = plugin.getServer().getScheduler().runTaskTimer(plugin, this::tick, 1L, 1L);
+        this.ticker = plugin.getServer().getScheduler().runTaskTimer(plugin, this::tick, 1L, 2L);
     }
 
     void play(List<Piece> pieces, Location origin, Location playerLoc, Player player, Settings settings, Runnable onComplete) {
         if (!settings.animated() || pieces.isEmpty() || totalActiveBlocks() + pieces.size() > settings.maxEntities()) {
+            if (settings.sounds() && !pieces.isEmpty()) {
+                var sg = pieces.getFirst().data().getSoundGroup();
+                origin.getWorld().playSound(origin, sg.getBreakSound(), SoundCategory.BLOCKS, 1.0f, 1.0f);
+            }
             // Immediate drop without animation
             for (Piece piece : pieces) {
                 dropLoot(piece.drops(), piece.source(), player, settings);
@@ -163,7 +288,8 @@ final class TimberAnimation implements AutoCloseable {
                 origin.getBlockZ() + 0.5
         );
 
-        // Fall direction: horizontal vector pointing AWAY from where the player chopped
+        // Fall direction: horizontal vector pointing AWAY from where the player chopped,
+        // or TOWARDS the player if fall-towards-player chance rolls.
         Vector fallDir = origin.toVector().subtract(playerLoc.toVector()).setY(0);
         if (fallDir.lengthSquared() < 0.0001) {
             fallDir = playerLoc.getDirection().setY(0);
@@ -172,6 +298,14 @@ final class TimberAnimation implements AutoCloseable {
             }
         }
         fallDir.normalize();
+
+        boolean fallsTowards = Math.random() < settings.fallTowardsPlayerChance();
+        if (fallsTowards) {
+            fallDir.multiply(-1.0);
+            if (settings.sounds()) {
+                world.playSound(pivot, Sound.ENTITY_ZOMBIE_BREAK_WOODEN_DOOR, SoundCategory.BLOCKS, 1.0f, 1.3f);
+            }
+        }
 
         // Rotation axis: perpendicular to up-vector and fall direction: axis = (0, 1, 0) x (dx, 0, dz) = (dz, 0, -dx)
         Vector3f rotationAxis = new Vector3f((float) fallDir.getZ(), 0.0f, (float) -fallDir.getX()).normalize();
@@ -182,7 +316,7 @@ final class TimberAnimation implements AutoCloseable {
 
         List<DisplayPiece> displayPieces = new ArrayList<>(pieces.size());
         Vector3f highestTrunkOffset = null;
-        double maxTrunkDistSq = -1.0;
+        int maxTrunkY = Integer.MIN_VALUE;
 
         for (Piece piece : pieces) {
             float rx = (float) (piece.source().getBlockX() - pivot.getX());
@@ -190,12 +324,9 @@ final class TimberAnimation implements AutoCloseable {
             float rz = (float) (piece.source().getBlockZ() - pivot.getZ());
             Vector3f offset = new Vector3f(rx, ry, rz);
 
-            if (piece.isLog()) {
-                double distSq = (double) rx * rx + (double) ry * ry + (double) rz * rz;
-                if (distSq > maxTrunkDistSq) {
-                    maxTrunkDistSq = distSq;
-                    highestTrunkOffset = offset;
-                }
+            if (piece.isLog() && piece.source().getBlockY() > maxTrunkY) {
+                maxTrunkY = piece.source().getBlockY();
+                highestTrunkOffset = offset;
             }
 
             try {
@@ -224,15 +355,16 @@ final class TimberAnimation implements AutoCloseable {
 
         // Initial wood crack / break sound and strain particles at the cut hinge
         if (settings.sounds()) {
-            world.playSound(pivot, Sound.BLOCK_WOOD_BREAK, 1.0f, 0.75f);
-            world.playSound(pivot, Sound.BLOCK_CHERRY_WOOD_BREAK, 0.8f, 0.6f);
+            world.playSound(pivot, Sound.BLOCK_WOOD_BREAK, SoundCategory.BLOCKS, 1.4f, 0.65f);
+            world.playSound(pivot, Sound.BLOCK_CHERRY_WOOD_BREAK, SoundCategory.BLOCKS, 1.2f, 0.55f);
+            world.playSound(pivot, Sound.ENTITY_CREAKING_SWAY, SoundCategory.BLOCKS, 1.2f, 0.8f);
         }
         if (settings.particles() && !pieces.isEmpty()) {
             world.spawnParticle(Particle.BLOCK, pivot.clone().add(0, 0.5, 0), 24, 0.3, 0.3, 0.3, pieces.getFirst().data());
         }
 
         ActiveTreeFall fall = new ActiveTreeFall(
-                world, pivot, rotationAxis, displayPieces, highestTrunkOffset,
+                world, pivot, fallDir, rotationAxis, displayPieces, highestTrunkOffset,
                 pieces.getFirst().data(), player, settings, onComplete
         );
         active.put(fall.id, fall);
@@ -252,16 +384,10 @@ final class TimberAnimation implements AutoCloseable {
         World world = fall.world;
         Location pivot = fall.pivot;
 
-        // Ground impact sound effects
-        if (fall.settings.sounds()) {
-            world.playSound(pivot, Sound.BLOCK_WOOD_FALL, 1.3f, 0.7f);
-            world.playSound(pivot, Sound.BLOCK_WOOD_BREAK, 1.0f, 0.7f);
-            world.playSound(pivot, Sound.BLOCK_GRASS_BREAK, 0.9f, 0.9f);
-        }
-
-        // Ground impact dust and wood particles
-        if (fall.settings.particles()) {
-            world.spawnParticle(Particle.POOF, pivot.clone().add(0, 0.3, 0), 12, 0.5, 0.2, 0.5, 0.05);
+        // If not already played during triggerImpact, play ground impact sounds & particles
+        if (!fall.impactTriggered) {
+            fall.applyImpactEffects(finalQ);
+            fall.applyImpactDamage(finalQ);
         }
 
         // Drop loot and spawn impact particles at each block's exact landing coordinate

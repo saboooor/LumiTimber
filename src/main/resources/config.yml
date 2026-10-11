@@ -36,10 +36,20 @@ tool:
 animation:
   # Enable Display Entity whole-tree rigid tilt animation.
   enabled: true
-  # Duration of the fall animation in ticks (26 ticks ≈ 1.3 seconds).
-  fall-duration-ticks: 26
+  # Small impact rebound/bounce when the tree hits the ground.
+  bounce: true
+  # Duration of the fall animation in ticks (52 ticks ≈ 2.6 seconds).
+  fall-duration-ticks: 52
   # Maximum simultaneous active display blocks across all running timber animations.
   max-active-blocks: 2000
+
+danger:
+  # Chance (0.0 to 1.0, e.g. 0.25 = 25%) for a felled tree to fall towards the player instead of away.
+  fall-towards-player-chance: 0.25
+  # If true, players caught in the path/impact of a falling tree take heavy crushing damage.
+  damage-players: true
+  # Damage dealt in half-hearts (14.0 = 7 full hearts).
+  damage-amount: 14.0
 
 drops:
   # Whether leaves drop their contents (saplings, apples, sticks).
@@ -155,9 +165,16 @@ trees:
     diagonal-leaves: false
 
   poplar:
-    logs: [BIRCH_LOG, STRIPPED_BIRCH_LOG, BIRCH_WOOD, STRIPPED_BIRCH_WOOD]
-    leaves: [BIRCH_LEAVES, OAK_LEAVES]
-    sapling: BIRCH_SAPLING
-    branch-radius: 1
+    logs:
+      - POPLAR_LOG
+      - STRIPPED_POPLAR_LOG
+      - POPLAR_WOOD
+      - STRIPPED_POPLAR_WOOD
+    leaves:
+      - YELLOW_POPLAR_LEAVES
+      - ORANGE_POPLAR_LEAVES
+      - RED_POPLAR_LEAVES
+    sapling: POPLAR_SAPLING
+    branch-radius: 2
     leaf-radius: 4
     diagonal-leaves: false
