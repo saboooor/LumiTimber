@@ -1,0 +1,16 @@
+name: LumiTimber
+version: ${version}
+main: ca.saboor.lumitimber.LumiTimberPlugin
+api-version: '26.1.2'
+description: Lightweight natural tree detection and animated timber felling using Display Entities.
+author: saboor
+commands:
+  timber:
+    description: Toggle tree felling or reload LumiTimber
+    usage: /timber [toggle|reload]
+    aliases: [lumitimber]
+permissions:
+  lumitimber.chop:
+    default: true
+  lumitimber.reload:
+    default: op
